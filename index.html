@@ -268,4 +268,245 @@
                 "DOM": { absolute: { mean: 193.5, sd: 37.6 }, relative: { mean: 33.7, sd: 6.7 } } 
               },
               "30-39": { 
-                "NON": { absolute: { mean: 211
+                "NON": { absolute: { mean: 211.1, sd: 54.6 }, relative: { mean: 33.1, sd: 8.2 } }, 
+                "DOM": { absolute: { mean: 212.3, sd: 58.9 }, relative: { mean: 35.5, sd: 7.6 } } 
+              }
+            }
+          }
+        };
+
+        const IconSVG = (pathD, className = '') => e('svg', { className: `w-6 h-6 ${className}`, fill: "none", stroke: "currentColor", viewBox: "0 0 24 24", xmlns: "http://www.w3.org/2000/svg" },
+          e('path', { strokeLinecap: "round", strokeLinejoin: "round", strokeWidth: 2, d: pathD })
+        );
+
+        const WeightIcon = () => IconSVG("M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3", "text-amber-600");
+
+        const ActivityIcon = () => IconSVG("M13 10V3L4 14h7v7l9-11h-7z", "text-indigo-600");
+
+        const AlertCircleIcon = ({ color = 'text-red-600' }) => e('svg', { className: `w-5 h-5 ${color}`, fill: "none", stroke: "currentColor", viewBox: "0 0 24 24" },
+          e('circle', { cx: 12, cy: 12, r: 10, strokeWidth: 2 }),
+          e('line', { x1: 12, y1: 8, x2: 12, y2: 12, strokeWidth: 2 }),
+          e('line', { x1: 12, y1: 16, x2: 12.01, y2: 16, strokeWidth: 2 })
+        );
+
+        const TrendingUpIcon = () => IconSVG("M13 7h8m0 0v8m0-8l-8 8-4-4-6 6", "text-indigo-600");
+
+        const convertToNewtons = (value, fromUnit) => {
+          if (!value) return null;
+          const num = parseFloat(value);
+          if (isNaN(num) || num <= 0) return null;
+          return fromUnit === "kg" ? num * 9.81 : fromUnit === "lbs" ? num * 4.448 : num;
+        };
+
+        const convertFromNewtons = (value, toUnit) => {
+          if (value == null) return null;
+          return toUnit === "kg" ? value / 9.81 : toUnit === "lbs" ? value / 4.448 : value;
+        };
+
+        const convertWeightToKg = (weight, fromUnit) => {
+          if (!weight) return null;
+          const num = parseFloat(weight);
+          if (isNaN(num)) return null;
+          return fromUnit === "lbs" ? num * 0.453592 : num;
+        };
+
+        function App() {
+          const [movement, setMovement] = useState("Rotation externe épaule");
+          const [sex, setSex] = useState("H");
+          const [ageRange, setAgeRange] = useState("20-29");
+          const [side, setSide] = useState("DOM");
+          const [forceType, setForceType] = useState("absolute");
+          const [unit, setUnit] = useState("N");
+          const [weightUnit, setWeightUnit] = useState("kg");
+          const [bodyWeight, setBodyWeight] = useState("");
+          const [measures, setMeasures] = useState(["", "", ""]);
+
+          const handleMeasureChange = (i, v) => {
+            const arr = [...measures];
+            arr[i] = v;
+            setMeasures(arr);
+          };
+
+          const validMeasures = measures.map(m => convertToNewtons(m, unit)).filter(m => m !== null);
+          const mean = validMeasures.length > 0 ? validMeasures.reduce((a, b) => a + b, 0) / validMeasures.length : null;
+          const bodyWeightKg = convertWeightToKg(bodyWeight, weightUnit);
+          const bodyWeightN = bodyWeightKg ? bodyWeightKg * 9.81 : null;
+          const relativeForce = mean && bodyWeightN ? (mean / bodyWeightN) * 100 : null;
+
+          const coefficientOfVariation = validMeasures.length > 1 ? (() => {
+            const sd = Math.sqrt(validMeasures.reduce((s, val) => s + Math.pow(val - mean, 2), 0) / validMeasures.length);
+            return (sd / mean) * 100;
+          })() : null;
+
+          const norm = NORMS_OBJ[movement]?.[sex]?.[ageRange]?.[side];
+          const currentNorm = norm?.[forceType];
+
+          const valueToCompare = forceType === "absolute" ? mean : relativeForce;
+          const percentDifference = valueToCompare && currentNorm ? ((valueToCompare - currentNorm.mean) / currentNorm.mean) * 100 : null;
+          const displayUnit = forceType === "absolute" ? unit : "%";
+          const displayValue = forceType === "absolute" ? (mean ? convertFromNewtons(mean, unit) : null) : relativeForce;
+
+          const chartData = useMemo(() => {
+            if (!currentNorm) return [];
+            const isAbs = forceType === "absolute";
+            const m = isAbs ? convertFromNewtons(currentNorm.mean, unit) : currentNorm.mean;
+            const s = isAbs ? convertFromNewtons(currentNorm.sd, unit) : currentNorm.sd;
+
+            const pdf = x => {
+              const z = (x - m) / s;
+              return (1 / (s * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * z * z);
+            };
+
+            const points = 100;
+            const range = 4;
+            const data = [];
+
+            for (let i = 0; i <= points; i++) {
+              const x = m + range * s * (2 * i / points - 1);
+              data.push({ force: Math.round(x * 10) / 10, probabilite: pdf(x) });
+            }
+            return data;
+          }, [currentNorm, unit, forceType]);
+
+          return e('div', { className: "min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4" },
+            e('div', { className: "max-w-6xl mx-auto" },
+              e('div', { className: "bg-white rounded-xl shadow-2xl p-8" },
+                e('div', { className: "flex items-center gap-3 mb-8" },
+                  ActivityIcon(),
+                  e('h1', { className: "text-3xl font-bold text-gray-800" }, "Évaluation de la Force Musculaire")
+                ),
+                e('div', { className: "mb-6 bg-indigo-50 rounded-lg p-4" },
+                  e('label', { className: "block text-sm font-medium text-gray-700 mb-3" }, "Type d'analyse"),
+                  e('div', { className: "flex gap-4" },
+                    e('label', { className: "flex items-center cursor-pointer" },
+                      e('input', { type: "radio", value: "absolute", checked: forceType === "absolute", onChange: ev => setForceType(ev.target.value), className: "mr-2 w-4 h-4" }),
+                      e('span', { className: "text-gray-700 font-medium" }, "Force absolue")
+                    ),
+                    e('label', { className: "flex items-center cursor-pointer" },
+                      e('input', { type: "radio", value: "relative", checked: forceType === "relative", onChange: ev => setForceType(ev.target.value), className: "mr-2 w-4 h-4" }),
+                      e('span', { className: "text-gray-700 font-medium" }, "Force relative (% poids corporel)")
+                    )
+                  )
+                ),
+                forceType === "relative" ? e('div', { className: "mb-6 bg-amber-50 rounded-lg p-4" },
+                  e('div', { className: "flex items-center gap-2 mb-3" },
+                    WeightIcon(),
+                    e('label', { className: "text-sm font-medium text-gray-700" }, "Poids corporel (requis)")
+                  ),
+                  e('div', { className: "grid md:grid-cols-2 gap-4" },
+                    e('div', null,
+                      e('input', { type: "number", step: "0.1", value: bodyWeight, onChange: ev => setBodyWeight(ev.target.value), placeholder: "Entrer le poids", className: "w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500" })
+                    ),
+                    e('div', { className: "flex gap-4" },
+                      ["kg", "lbs"].map(u => e('label', { key: u, className: "flex items-center" },
+                        e('input', { type: "radio", value: u, checked: weightUnit === u, onChange: ev => setWeightUnit(ev.target.value), className: "mr-2" }),
+                        e('span', { className: "text-gray-700" }, u)
+                      ))
+                    )
+                  )
+                ) : null,
+                e('div', { className: "grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8" },
+                  e('div', null,
+                    e('label', { className: "block text-sm font-medium text-gray-700 mb-2" }, "Mouvement"),
+                    e('select', { value: movement, onChange: ev => setMovement(ev.target.value), className: "w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" },
+                      Object.keys(NORMS_OBJ).map(k => e('option', { key: k }, k))
+                    )
+                  ),
+                  e('div', null,
+                    e('label', { className: "block text-sm font-medium text-gray-700 mb-2" }, "Sexe"),
+                    e('select', { value: sex, onChange: ev => setSex(ev.target.value), className: "w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" },
+                      e('option', { value: "H" }, "Homme"),
+                      e('option', { value: "F" }, "Femme")
+                    )
+                  ),
+                  e('div', null,
+                    e('label', { className: "block text-sm font-medium text-gray-700 mb-2" }, "Âge"),
+                    e('select', { value: ageRange, onChange: ev => setAgeRange(ev.target.value), className: "w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" },
+                      e('option', { value: "20-29" }, "20-29 ans"),
+                      e('option', { value: "30-39" }, "30-39 ans")
+                    )
+                  ),
+                  e('div', null,
+                    e('label', { className: "block text-sm font-medium text-gray-700 mb-2" }, "Côté"),
+                    e('select', { value: side, onChange: ev => setSide(ev.target.value), className: "w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" },
+                      e('option', { value: "DOM" }, "Dominant"),
+                      e('option', { value: "NON" }, "Non-dominant")
+                    )
+                  )
+                ),
+                e('div', { className: "bg-gray-50 rounded-lg p-6 mb-8" },
+                  e('h2', { className: "text-xl font-semibold text-gray-800 mb-4" }, "Mesures (1 à 3 répétitions)"),
+                  e('div', { className: "mb-4" },
+                    e('label', { className: "block text-sm font-medium text-gray-700 mb-2" }, "Unité de mesure"),
+                    e('div', { className: "flex gap-4" },
+                      ["N", "kg", "lbs"].map(u => e('label', { key: u, className: "flex items-center" },
+                        e('input', { type: "radio", value: u, checked: unit === u, onChange: ev => setUnit(ev.target.value), className: "mr-2" }),
+                        e('span', { className: "text-gray-700" }, u)
+                      ))
+                    )
+                  ),
+                  e('div', { className: "grid md:grid-cols-3 gap-4" },
+                    [0, 1, 2].map(i => e('div', { key: i },
+                      e('label', { className: "block text-sm font-medium text-gray-700 mb-2" }, `Mesure ${i + 1}`),
+                      e('input', { type: "number", step: "0.1", value: measures[i], onChange: ev => handleMeasureChange(i, ev.target.value), placeholder: `Valeur en ${unit}`, className: "w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" })
+                    ))
+                  )
+                ),
+                (validMeasures.length > 0 && (forceType === "absolute" || bodyWeightN)) ? e(React.Fragment, null,
+                  e('div', { className: "grid md:grid-cols-3 gap-6 mb-8" },
+                    e('div', { className: "bg-indigo-50 rounded-lg p-6" },
+                      e('div', { className: "flex items-center gap-2 mb-2" }, TrendingUpIcon(), e('h3', { className: "font-semibold text-gray-700" }, "Moyenne")),
+                      e('p', { className: "text-3xl font-bold text-indigo-600" }, displayValue != null ? `${Number(displayValue).toFixed(1)} ${displayUnit}` : 'N/A')
+                    ),
+                    e('div', { className: `rounded-lg p-6 ${coefficientOfVariation > 10 ? 'bg-red-50' : 'bg-green-50'}` },
+                      e('div', { className: "flex items-center gap-2 mb-2" }, AlertCircleIcon({ color: coefficientOfVariation > 10 ? 'text-red-600' : 'text-green-600' }), e('h3', { className: "font-semibold text-gray-700" }, "Coefficient de variation")),
+                      e('p', { className: `text-3xl font-bold ${coefficientOfVariation > 10 ? 'text-red-600' : 'text-green-600'}` }, coefficientOfVariation != null ? `${coefficientOfVariation.toFixed(1)}%` : 'N/A'),
+                      coefficientOfVariation > 10 ? e('p', { className: "text-sm text-red-600 mt-2" }, "⚠️ Variation élevée (>10%)") : null
+                    ),
+                    e('div', { className: `rounded-lg p-6 ${percentDifference < 0 ? 'bg-orange-50' : 'bg-blue-50'}` },
+                      e('h3', { className: "font-semibold text-gray-700 mb-2" }, "Écart à la norme"),
+                      e('p', { className: `text-3xl font-bold ${percentDifference < 0 ? 'text-orange-600' : 'text-blue-600'}` }, percentDifference != null ? `${percentDifference > 0 ? '+' : ''}${percentDifference.toFixed(1)}%` : 'N/A'),
+                      currentNorm ? e('p', { className: "text-sm text-gray-600 mt-2" },
+                        `Norme: ${(forceType === "absolute" ? convertFromNewtons(currentNorm.mean, unit) : currentNorm.mean).toFixed(1)} ${displayUnit} (±${(forceType === "absolute" ? convertFromNewtons(currentNorm.sd, unit) : currentNorm.sd).toFixed(1)})`
+                      ) : null
+                    )
+                  ),
+                  e('div', { className: "bg-gray-50 rounded-lg p-6" },
+                    e('h2', { className: "text-xl font-semibold text-gray-800 mb-4" }, "Distribution normale et positionnement"),
+                    e(ResponsiveContainer, { width: "100%", height: 400 },
+                      e(ComposedChart, { data: chartData },
+                        e(CartesianGrid, { strokeDasharray: "3 3" }),
+                        e(XAxis, {
+                          dataKey: "force",
+                          type: "number",
+                          domain: ['dataMin', 'dataMax'],
+                          tickFormatter: v => Number(v).toFixed(1),
+                          label: { value: `Force (${displayUnit})`, position: "insideBottom", offset: -5 }
+                        }),
+                        e(YAxis, { label: { value: "Densité", angle: -90, position: "insideLeft" } }),
+                        e(Tooltip, null),
+                        e(Legend, null),
+                        displayValue != null ? e(ReferenceArea, { x1: chartData[0]?.force, x2: displayValue, fill: "#fca5a5", fillOpacity: 0.4, stroke: "none" }) : null,
+                        e(Line, { type: "monotone", dataKey: "probabilite", stroke: "#4f46e5", strokeWidth: 2, dot: false, name: "Normale" }),
+                        currentNorm ? e(ReferenceLine, { x: forceType === "absolute" ? convertFromNewtons(currentNorm.mean, unit) : currentNorm.mean, stroke: "#10b981", strokeWidth: 2, strokeDasharray: "5 5", label: { value: "Norme", position: "top", fill: "#10b981" } }) : null,
+                        displayValue != null ? e(ReferenceLine, { x: displayValue, stroke: "#dc2626", strokeWidth: 4, label: { value: "Vous", position: "top", fill: "#dc2626", fontSize: 14 } }) : null
+                      )
+                    )
+                  )
+                ) : null,
+                (validMeasures.length > 0 && forceType === "relative" && !bodyWeightN) ? e('div', { className: "bg-amber-50 border-2 border-amber-300 rounded-lg p-6 text-center" },
+                  AlertCircleIcon({ color: "text-amber-600" }),
+                  e('p', { className: "text-lg font-semibold text-amber-800 mt-3" }, "Entrez le poids corporel pour la force relative")
+                ) : null
+              )
+            )
+          );
+        }
+
+        ReactDOM.render(e(App), document.getElementById('root'));
+      });
+    });
+  </script>
+  <div class="text-center text-gray-500 text-sm mt-8 pb-4">App créée par Jean-François Lemay pht PhD © 2025</div>
+</body>
+</html>
