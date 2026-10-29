@@ -6,7 +6,6 @@
   <meta name="description" content="App autonome d'évaluation de la force musculaire."/>
   <title>Évaluation de la Force Musculaire</title>
   
-  <!-- Chargement des bibliothèques via CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = { theme: { extend: { fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui'] } } } }
@@ -43,7 +42,7 @@
 
       const e = React.createElement;
       const { useState, useMemo } = React;
-      const { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, ReferenceArea, ResponsiveContainer, Area } = Recharts;
+      const { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, ResponsiveContainer, Area } = Recharts;
 
       const NORMS_OBJ = {
         "Rotation externe épaule": {
@@ -336,32 +335,61 @@
         const displayUnit = forceType === "absolute" ? unit : "%";
         const displayValue = forceType === "absolute" ? (mean ? convertFromNewtons(mean, unit) : null) : relativeForce;
 
+        // Calculs des valeurs de référence de la norme
+        const normMean = currentNorm ? (forceType === "absolute" ? convertFromNewtons(currentNorm.mean, unit) : currentNorm.mean) : null;
+        const normSd = currentNorm ? (forceType === "absolute" ? convertFromNewtons(currentNorm.sd, unit) : currentNorm.sd) : null;
+        const minus2SD = (normMean !== null && normSd !== null) ? normMean - 2 * normSd : null;
+        const plus2SD = (normMean !== null && normSd !== null) ? normMean + 2 * normSd : null;
+
+        // Détermination dynamique de la couleur selon le score Z
+        const zoneColor = useMemo(() => {
+          if (displayValue === null || normMean === null || normSd === null) return { fill: "#fca5a5", stroke: "#ef4444" };
+          const zScore = (displayValue - normMean) / normSd;
+          if (zScore < -2) {
+            return { fill: "#fca5a5", stroke: "#ef4444" }; // Rouge (Inférieur à -2 SD)
+          } else if (zScore <= 2) {
+            return { fill: "#86efac", stroke: "#22c55e" }; // Vert (Entre -2 SD et +2 SD)
+          } else {
+            return { fill: "#93c5fd", stroke: "#3b82f6" }; // Bleu (Supérieur à +2 SD)
+          }
+        }, [displayValue, normMean, normSd]);
+
         const chartData = useMemo(() => {
           if (!currentNorm) return [];
-          const isAbs = forceType === "absolute";
-          const m = isAbs ? convertFromNewtons(currentNorm.mean, unit) : currentNorm.mean;
-          const s = isAbs ? convertFromNewtons(currentNorm.sd, unit) : currentNorm.sd;
+          const m = normMean;
+          const s = normSd;
+          const v = displayValue;
 
           const pdf = x => {
             const z = (x - m) / s;
             return (1 / (s * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * z * z);
           };
 
-          const points = 100;
+          const points = 150;
           const range = 4;
-          const data = [];
+          let rawValues = [];
 
           for (let i = 0; i <= points; i++) {
             const x = m + range * s * (2 * i / points - 1);
-            data.push({
-              force: Math.round(x * 10) / 10,
-              probabilite: pdf(x)
-            });
+            rawValues.push(x);
           }
-          return data;
-        }, [currentNorm, unit, forceType]);
 
-        const minForce = chartData.length > 0 ? chartData[0].force : 0;
+          if (v != null) {
+            rawValues.push(v);
+          }
+
+          rawValues = Array.from(new Set(rawValues)).sort((a, b) => a - b);
+
+          return rawValues.map(x => {
+            const y = pdf(x);
+            const inZone = v != null && x <= v;
+            return {
+              force: Math.round(x * 1000) / 1000,
+              probabilite: y,
+              zonePersonne: inZone ? y : null
+            };
+          });
+        }, [currentNorm, normMean, normSd, displayValue]);
 
         return e('div', { className: "min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4" },
           e('div', { className: "max-w-6xl mx-auto" },
@@ -462,7 +490,7 @@
                     e('h3', { className: "font-semibold text-gray-700 mb-2" }, "Écart à la norme"),
                     e('p', { className: `text-3xl font-bold ${percentDifference < 0 ? 'text-orange-600' : 'text-blue-600'}` }, percentDifference != null ? `${percentDifference > 0 ? '+' : ''}${percentDifference.toFixed(1)}%` : 'N/A'),
                     currentNorm ? e('p', { className: "text-sm text-gray-600 mt-2" },
-                      `Norme: ${(forceType === "absolute" ? convertFromNewtons(currentNorm.mean, unit) : currentNorm.mean).toFixed(1)} ${displayUnit} (±${(forceType === "absolute" ? convertFromNewtons(currentNorm.sd, unit) : currentNorm.sd).toFixed(1)})`
+                      `Norme: ${normMean.toFixed(1)} ${displayUnit} (±${normSd.toFixed(1)})`
                     ) : null
                   )
                 ),
@@ -470,11 +498,6 @@
                   e('h2', { className: "text-xl font-semibold text-gray-800 mb-4" }, "Distribution normale et positionnement"),
                   e(ResponsiveContainer, { width: "100%", height: 400 },
                     e(ComposedChart, { data: chartData },
-                      e('defs', null,
-                        e('clipPath', { id: "clipArea" },
-                          e(Area, { type: "monotone", dataKey: "probabilite", stroke: "none", fill: "#fff" })
-                        )
-                      ),
                       e(CartesianGrid, { strokeDasharray: "3 3" }),
                       e(XAxis, { 
                         dataKey: "force", 
@@ -486,17 +509,52 @@
                       e(YAxis, { label: { value: "Densité", angle: -90, position: "insideLeft" } }),
                       e(Tooltip, null),
                       e(Legend, null),
-                      displayValue != null ? e(ReferenceArea, {
-                        x1: minForce,
-                        x2: displayValue,
-                        fill: "#fca5a5",
+
+                      // Zone colorée sous la courbe jusqu'à la valeur de l'utilisateur (à gauche)
+                      displayValue != null ? e(Area, {
+                        type: "monotone",
+                        dataKey: "zonePersonne",
+                        fill: zoneColor.fill,
                         fillOpacity: 0.5,
                         stroke: "none",
-                        clipPath: "url(#clipArea)"
+                        name: "Votre zone"
                       }) : null,
+
+                      // Courbe de distribution normale
                       e(Line, { type: "monotone", dataKey: "probabilite", stroke: "#4f46e5", strokeWidth: 2, dot: false, name: "Normale" }),
-                      currentNorm ? e(ReferenceLine, { x: forceType === "absolute" ? convertFromNewtons(currentNorm.mean, unit) : currentNorm.mean, stroke: "#10b981", strokeWidth: 2, strokeDasharray: "5 5", label: { value: "Norme", position: "top", fill: "#10b981" } }) : null,
-                      displayValue != null ? e(ReferenceLine, { x: displayValue, stroke: "#dc2626", strokeWidth: 4, label: { value: "Vous", position: "top", fill: "#dc2626", fontSize: 14 } }) : null
+
+                      // Ligne de la moyenne normative (bleue)
+                      normMean != null ? e(ReferenceLine, { 
+                        x: normMean, 
+                        stroke: "#3b82f6", 
+                        strokeWidth: 2, 
+                        strokeDasharray: "5 5", 
+                        label: { value: "Norme", position: "top", fill: "#3b82f6", fontSize: 13 } 
+                      }) : null,
+
+                      // Lignes de -2 SD et +2 SD
+                      minus2SD != null ? e(ReferenceLine, { 
+                        x: minus2SD, 
+                        stroke: "#9ca3af", 
+                        strokeWidth: 1.5, 
+                        strokeDasharray: "3 3", 
+                        label: { value: "-2 SD", position: "top", fill: "#6b7280", fontSize: 11 } 
+                      }) : null,
+                      plus2SD != null ? e(ReferenceLine, { 
+                        x: plus2SD, 
+                        stroke: "#9ca3af", 
+                        strokeWidth: 1.5, 
+                        strokeDasharray: "3 3", 
+                        label: { value: "+2 SD", position: "top", fill: "#6b7280", fontSize: 11 } 
+                      }) : null,
+
+                      // Ligne de la valeur de l'utilisateur
+                      displayValue != null ? e(ReferenceLine, { 
+                        x: displayValue, 
+                        stroke: zoneColor.stroke, 
+                        strokeWidth: 4, 
+                        label: { value: "Vous", position: "top", fill: zoneColor.stroke, fontSize: 14, fontWeight: "bold" } 
+                      }) : null
                     )
                   )
                 )
